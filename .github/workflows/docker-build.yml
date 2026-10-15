@@ -5,13 +5,26 @@ on:
   push:
     branches:
       - main
+      # Build-only validation of upgrade branches before a PR exists (no deploy, no secrets).
+      - "upgrade/**"
 
 jobs:
   docker-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Unit and static tests
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -23,6 +36,40 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
+          load: true
           tags: openclaw-railway-template:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: OpenClaw version in image
+        timeout-minutes: 2
+        run: |
+          expected="$(sed -n 's#^ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:\([0-9.]*\)@.*#\1#p' Dockerfile)"
+          actual="$(docker run --rm --entrypoint node openclaw-railway-template:ci /app/openclaw.mjs --version)"
+          echo "expected=$expected actual=$actual"
+          echo "$actual" | grep -q "OpenClaw $expected "
+
+      # Boots the wrapper on an empty /data with throwaway credentials; no OpenClaw setup runs.
+      - name: Container smoke test
+        timeout-minutes: 3
+        run: |
+          docker run -d --name smoke -p 8080:8080 \
+            -e PORT=8080 \
+            -e SETUP_PASSWORD=ci-only-setup-password-0123 \
+            -e OPENCLAW_GATEWAY_TOKEN=ci-only-gateway-token-0123456789 \
+            -e OPENCLAW_STATE_DIR=/data/.openclaw \
+            -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
+            openclaw-railway-template:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/setup/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/healthz | tee /tmp/healthz.json
+          grep -q '"configured":false' /tmp/healthz.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/setup)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u u:ci-only-setup-password-0123 http://127.0.0.1:8080/setup)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u u:ci-only-setup-password-0123 http://127.0.0.1:8080/setup/api/auth-groups)" = "200"
+
+      - name: Container logs
+        if: always()
+        run: docker logs smoke 2>&1 | tail -n 100 || true

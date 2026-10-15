@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Bump Dockerfile OPENCLAW_GIT_REF if needed
+      - name: Bump Dockerfile OPENCLAW_IMAGE if needed
         run: node scripts/bump-openclaw-ref.mjs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -30,12 +30,13 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: bump OPENCLAW_GIT_REF to latest release"
-          title: "chore: bump OPENCLAW_GIT_REF to latest OpenClaw release"
+          commit-message: "chore: bump OPENCLAW_IMAGE to latest release"
+          title: "chore: bump OPENCLAW_IMAGE to latest OpenClaw release"
           body: |
-            Automated update of the default OpenClaw build ref (`OPENCLAW_GIT_REF`) to the latest upstream release tag.
+            Automated update of the pinned OpenClaw image (`OPENCLAW_IMAGE`, tag + digest) to the latest stable upstream release.
 
-            This keeps the Railway template stable-by-default while staying current.
+            Before merging, read the upstream release notes for required migrations, and test against a copy of `/data` first.
+            Existing volumes will not start on the new version until you run the explicit migration (`OPENCLAW_ALLOW_STATE_MIGRATION=1` + `maintenance.migrate`; see README "Upgrading OpenClaw").
           branch: chore/bump-openclaw-ref
           delete-branch: true
           labels: |
